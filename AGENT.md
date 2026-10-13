@@ -220,3 +220,53 @@ $AIWORK_DATA_DIR（Docker: /app/data）
 **红线**：同步必须落在动作**前**（不是想起来再补）；`--prune` 必带（清理远端已删分支的本地幽灵引用）；pull 出现冲突时按 §交互规范 跟踪冲突块双方意图，不盲提 merge commit。
 
 > 来源：移植自 main 分支 §16（1b8937d）；docker_main 与 main 的章节编号存在偏移，后续移植以内容标题为准。
+
+## 16. 本机源码 + Docker 运行壳维护模式
+
+> 本机部署使用 `docker-compose.override.yml`：官方镜像只作为 Linux 运行壳，实际二进制与前端产物从源码目录 bind mount 进容器。**不要用 Compose 的镜像标签或镜像内文件判断当前运行版本**；运行版本由以下三个来源决定：Git 提交、`target/release/aiwork-server`、`dist/`。
+
+```yaml
+# docker-compose.override.yml 关键结构
+services:
+  aiwork-server:
+    image: ghcr.io/smart-open/traeworkassistant:1.4.13  # 仅运行壳
+    volumes:
+      - ./data:/app/data
+      - ./target/release/aiwork-server:/app/aiwork-server:ro
+      - ./dist:/app/dist:ro
+```
+
+### 本机更新流程
+
+```bash
+# 1. 同步官方 Docker 产品线
+git fetch --all --tags --prune
+git rebase origin/docker_main
+
+# 2. 本地测试
+cargo check -p aiwork-core
+cargo test --workspace
+npm test
+npx tsc --noEmit
+
+# 3. 编译后端与前端产物
+cargo build --release -p aiwork-server
+npm run build
+
+# 4. Docker 只重建/重启运行壳；数据不变
+docker compose up -d aiwork-server
+```
+
+### 版本核实顺序
+
+1. `git rev-parse HEAD` / `git log -1`：源码提交。
+2. `node -p "require('./package.json').version"` / 关于弹窗：前端版本。
+3. `sha256sum target/release/aiwork-server` 与 `docker compose exec aiwork-server sha256sum /app/aiwork-server`：确认容器实际执行的是宿主编译产物。
+4. `curl http://127.0.0.1:28080/health`：确认运行健康。
+
+### 维护约定
+
+- `docker-compose.override.yml` 是本机私有部署文件，保留在 Git 外，不提交、不推远端。
+- 源码补丁以 rebase 方式叠加在 `origin/docker_main` 上；官方已包含的提交会被 rebase 自动识别跳过。
+- 若前端源码或依赖变化，必须执行 `npm run build`；仅改 Rust 时只需重建 release 二进制并重启容器。
+- `docker compose ps` 显示的镜像标签只代表运行壳版本，不代表实际二进制/前端版本。

@@ -41,7 +41,27 @@ docker compose exec aiwork-server cat /app/data/conf/admin_token
 | `conf/` | `admin_token`、`vault_key.bin` | **必须备份**：`vault_key.bin` 丢失 = 全部账号凭据不可解密 |
 | `logs/` | 运行日志（按保留天数自动清理） | 可不备份 |
 
-升级流程：`git pull && docker compose up -d --build`（数据在 volume，升级不丢）。
+常规镜像部署升级流程：`git pull && docker compose up -d --build`（数据在 volume，升级不丢）。
+
+### 本机源码 + Docker 运行壳模式（可选）
+
+如果需要长期维护私有补丁，可把源码目录作为构建与运行中心，Docker 仅作为 Linux 运行壳：通过 `docker-compose.override.yml` 将 `./target/release/aiwork-server`、`./dist` 和 `./data` bind mount 到容器。更新流程为：
+
+```bash
+git fetch --all --tags --prune
+git rebase origin/docker_main
+
+cargo test --workspace
+npm test
+npx tsc --noEmit
+
+cargo build --release -p aiwork-server
+npm run build
+
+docker compose up -d aiwork-server
+```
+
+该模式下 `docker compose ps` 的镜像标签仅表示运行壳版本，不能作为实际应用版本依据；应以 Git 提交、关于页版本和二进制 hash 为准。
 
 ## 🔑 OAuth 账号录入（无桌面参与）
 
